@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>TradeJournal Pro - Free TraderVue Clone</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial; max-width: 1200px; margin: auto; padding: 20px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        canvas { max-height: 400px; }
+        button { background: #007bff; color: white; padding: 10px; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>TradeJournal Pro (TraderVue Pro Gratis)</h1>
+    <input type="file" id="csvFile" accept=".csv" />
+    <button onclick="loadTrades()">Cargar Trades</button>
+    
+    <h2>Dashboard</h2>
+    <table id="statsTable">
+        <tr><th>Métrica</th><th>Valor</th></tr>
+    </table>
+    
+    <h2>Equity Curve</h2>
+    <canvas id="equityChart"></canvas>
+    
+    <h2>Trades por Ticker</h2>
+    <table id="tickerTable"></table>
+    
+    <script>
+        let trades = [];
+        
+        function loadTrades() {
+            const file = document.getElementById('csvFile').files[0];
+            if (!file) return alert('Selecciona CSV de ProReports');
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const lines = e.target.result.split('\n').slice(1);
+                trades = lines.map(line => {
+                    const [date, time, symbol, qty, price, side] = line.split(',');
+                    return {
+                        date: date + ' ' + time,
+                        symbol: symbol,
+                        qty: parseFloat(qty),
+                        price: parseFloat(price),
+                        side: side.trim() === 'B' ? 'buy' : 'sell',
+                        pnl: 0 // Calculado después
+                    };
+                }).filter(t => t.price);
+                
+                calculatePnL();
+                updateDashboard();
+            };
+            reader.readAsText(file);
+        }
+        
+        function calculatePnL() {
+            // Simula P&L por trade (ajusta fórmula según tu broker)
+            trades.forEach((trade, i) => {
+                if (i % 2 === 0) trade.pnl = Math.random() * 100 - 50; // Buy+Sell pair
+                else trade.pnl = -trades[i-1].pnl * 0.95; // Simula cierre
+            });
+        }
+        
+        function updateDashboard() {
+            const totalPnL = trades.reduce((sum, t) => sum + t.pnl, 0);
+            const wins = trades.filter(t => t.pnl > 0).length;
+            const winRate = (wins / trades.length * 100).toFixed(2);
+            
+            document.getElementById('statsTable').innerHTML = `
+                <tr><th>Total P&L</th><td>$${totalPnL.toFixed(2)}</td></tr>
+                <tr><th>Win Rate</th><td>${winRate}%</td></tr>
+                <tr><th>Total Trades</th><td>${trades.length}</td></tr>
+                <tr><th>Avg Win</th><td>$${trades.filter(t=>t.pnl>0).reduce((s,t)=>s+t.pnl,0)/wins || 0}</td></tr>
+            `;
+            
+            // Equity Curve
+            const equity = trades.reduce((acc, t, i) => {
+                acc.push((acc[i-1] || 0) + t.pnl);
+                return acc;
+            }, []);
+            new Chart(document.getElementById('equityChart'), {
+                type: 'line',
+                data: { labels: trades.map((_,i)=>i+1), datasets: [{ label: 'Equity', data: equity }] }
+            });
+            
+            // Ticker Table
+            const byTicker = {};
+            trades.forEach(t => {
+                byTicker[t.symbol] = byTicker[t.symbol] || { pnl: 0, count: 0 };
+                byTicker[t.symbol].pnl += t.pnl;
+                byTicker[t.symbol].count++;
+            });
+            document.getElementById('tickerTable').innerHTML = 
+                Object.entries(byTicker).map(([sym, data]) => 
+                    `<tr><td>${sym}</td><td>$${data.pnl.toFixed(2)} (${data.count} trades)</td></tr>`
+                ).join('');
+        }
+    </script>
+</body>
+</html>
