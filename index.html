@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <title>TradeJournal Pro - Free TraderVue Clone</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Librería para leer archivos Excel -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
         body { font-family: Arial; max-width: 1200px; margin: auto; padding: 20px; }
         table { border-collapse: collapse; width: 100%; }
@@ -14,7 +16,7 @@
 </head>
 <body>
     <h1>TradeJournal Pro (TraderVue Pro Gratis)</h1>
-    <input type="file" id="csvFile" accept=".csv" />
+    <input type="file" id="csvFile" accept=".csv,.xlsx,.xls" />
     <button onclick="loadTrades()">Cargar Trades</button>
     
     <h2>Dashboard</h2>
@@ -30,50 +32,101 @@
     
     <script>
         let trades = [];
+        let equityChartInstance = null;
         
         function loadTrades() {
             const file = document.getElementById('csvFile').files[0];
-            if (!file) return alert('Selecciona CSV de ProReports');
+            if (!file) return alert('Selecciona archivo de ProReports (Excel o CSV)');
             
             const reader = new FileReader();
+            const name = file.name.toLowerCase();
+            const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
+
             reader.onload = (e) => {
-                const lines = e.target.result.split('\n').slice(1);
-                trades = lines.map(line => {
-                    const [date, time, symbol, qty, price, side] = line.split(',');
-                    return {
-                        date: date + ' ' + time,
-                        symbol: symbol,
-                        qty: parseFloat(qty),
-                        price: parseFloat(price),
-                        side: side.trim() === 'B' ? 'buy' : 'sell',
-                        pnl: 0 // Calculado después
-                    };
-                }).filter(t => t.price);
-                
-                calculatePnL();
-                updateDashboard();
+                if (isExcel) {
+                    // Leer EXCEL con SheetJS
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+                    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    parseRows(rows);
+                } else {
+                    // Leer CSV
+                    const text = e.target.result;
+                    const rows = text.split('\n').map(r => r.split(','));
+                    parseRows(rows);
+                }
             };
-            reader.readAsText(file);
+
+            if (isExcel) reader.readAsArrayBuffer(file);
+            else reader.readAsText(file);
+        }
+        
+        function parseRows(rows) {
+            if (!rows || rows.length < 2) {
+                alert('Archivo vacío o formato no reconocido');
+                return;
+            }
+
+            const header = rows[0].map(h => String(h || '').trim().toLowerCase());
+            const idxDate  = header.findIndex(h => h.includes('date') || h.includes('fecha'));
+            const idxTime  = header.findIndex(h => h.includes('time') || h.includes('hora'));
+            const idxSym   = header.findIndex(h => h.includes('symbol') || h.includes('ticker'));
+            const idxQty   = header.findIndex(h => h.includes('qty') || h.includes('quantity') || h.includes('cantidad'));
+            const idxPrice = header.findIndex(h => h.includes('price') || h.includes('precio'));
+            const idxSide  = header.findIndex(h => h.includes('side') || h.includes('buy') || h.includes('sell'));
+
+            trades = rows.slice(1).map(row => {
+                if (!row || row.length === 0) return null;
+                const date = idxDate >= 0 ? (row[idxDate] || '') : '';
+                const time = idxTime >= 0 ? (row[idxTime] || '') : '';
+                const symbol = idxSym >= 0 ? row[idxSym] : '';
+                const qty = idxQty >= 0 ? parseFloat(row[idxQty]) : NaN;
+                const price = idxPrice >= 0 ? parseFloat(row[idxPrice]) : NaN;
+                const sideRaw = idxSide >= 0 ? String(row[idxSide] || '') : '';
+                const side = sideRaw.trim().toUpperCase().startsWith('B') ? 'buy' : 'sell';
+
+                return {
+                    date: (String(date) + ' ' + String(time)).trim(),
+                    symbol: String(symbol || '').trim(),
+                    qty: qty,
+                    price: price,
+                    side: side,
+                    pnl: 0
+                };
+            }).filter(t => t && t.symbol && !isNaN(t.price) && !isNaN(t.qty));
+
+            if (trades.length === 0) {
+                alert('No se detectaron trades válidos. Revisa que las columnas tengan fecha, ticker, qty, precio, side.');
+                return;
+            }
+
+            calculatePnL();
+            updateDashboard();
         }
         
         function calculatePnL() {
-            // Simula P&L por trade (ajusta fórmula según tu broker)
+            // P&L simulado por ahora; luego lo ajustamos a tu lógica real
             trades.forEach((trade, i) => {
-                if (i % 2 === 0) trade.pnl = Math.random() * 100 - 50; // Buy+Sell pair
-                else trade.pnl = -trades[i-1].pnl * 0.95; // Simula cierre
+                if (i % 2 === 0) trade.pnl = Math.random() * 100 - 50;
+                else trade.pnl = -trades[i-1].pnl * 0.95;
             });
         }
         
         function updateDashboard() {
             const totalPnL = trades.reduce((sum, t) => sum + t.pnl, 0);
-            const wins = trades.filter(t => t.pnl > 0).length;
-            const winRate = (wins / trades.length * 100).toFixed(2);
-            
+            const winsArr = trades.filter(t => t.pnl > 0);
+            const wins = winsArr.length;
+            const winRate = trades.length ? (wins / trades.length * 100).toFixed(2) : 0;
+            const avgWin = wins ? (winsArr.reduce((s,t)=>s+t.pnl,0) / wins).toFixed(2) : 0;
+
             document.getElementById('statsTable').innerHTML = `
-                <tr><th>Total P&L</th><td>$${totalPnL.toFixed(2)}</td></tr>
-                <tr><th>Win Rate</th><td>${winRate}%</td></tr>
-                <tr><th>Total Trades</th><td>${trades.length}</td></tr>
-                <tr><th>Avg Win</th><td>$${trades.filter(t=>t.pnl>0).reduce((s,t)=>s+t.pnl,0)/wins || 0}</td></tr>
+                <tr><th>Métrica</th><th>Valor</th></tr>
+                <tr><td>Total P&L</td><td>$${totalPnL.toFixed(2)}</td></tr>
+                <tr><td>Win Rate</td><td>${winRate}%</td></tr>
+                <tr><td>Total Trades</td><td>${trades.length}</td></tr>
+                <tr><td>Avg Win</td><td>$${avgWin}</td></tr>
             `;
             
             // Equity Curve
@@ -81,22 +134,39 @@
                 acc.push((acc[i-1] || 0) + t.pnl);
                 return acc;
             }, []);
-            new Chart(document.getElementById('equityChart'), {
+
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            if (equityChartInstance) equityChartInstance.destroy();
+            equityChartInstance = new Chart(ctx, {
                 type: 'line',
-                data: { labels: trades.map((_,i)=>i+1), datasets: [{ label: 'Equity', data: equity }] }
+                data: { 
+                    labels: trades.map((_,i)=>i+1), 
+                    datasets: [{ 
+                        label: 'Equity', 
+                        data: equity,
+                        borderColor: '#007bff',
+                        fill: false,
+                        tension: 0.1
+                    }] 
+                }
             });
             
             // Ticker Table
             const byTicker = {};
             trades.forEach(t => {
-                byTicker[t.symbol] = byTicker[t.symbol] || { pnl: 0, count: 0 };
+                if (!byTicker[t.symbol]) byTicker[t.symbol] = { pnl: 0, count: 0 };
                 byTicker[t.symbol].pnl += t.pnl;
                 byTicker[t.symbol].count++;
             });
-            document.getElementById('tickerTable').innerHTML = 
-                Object.entries(byTicker).map(([sym, data]) => 
-                    `<tr><td>${sym}</td><td>$${data.pnl.toFixed(2)} (${data.count} trades)</td></tr>`
-                ).join('');
+
+            const rowsHtml = Object.entries(byTicker).map(([sym, data]) => 
+                `<tr><td>${sym}</td><td>$${data.pnl.toFixed(2)} (${data.count} trades)</td></tr>`
+            ).join('');
+
+            document.getElementById('tickerTable').innerHTML = `
+                <tr><th>Ticker</th><th>P&L / Nº Trades</th></tr>
+                ${rowsHtml}
+            `;
         }
     </script>
 </body>
